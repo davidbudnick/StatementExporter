@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	writeToFile("Transaction Date,Posting Date,Description,Amount")
+	writeToFile("Year,Transaction Date,Posting Date,Description,Amount")
 
 	rootDir := "./statements"
 	files, err := ioutil.ReadDir(rootDir)
@@ -20,7 +20,6 @@ func main() {
 	}
 
 	for _, f := range files {
-		fmt.Println(f.Name())
 		content, err := readPdf(fmt.Sprintf("%s/%s", rootDir, f.Name()))
 		if err != nil {
 			panic(err)
@@ -31,6 +30,10 @@ func main() {
 }
 
 func readPdf(path string) (string, error) {
+
+	var startYear string
+	var endYear string
+
 	f, r, err := pdf.Open(path)
 	defer func() {
 		_ = f.Close()
@@ -47,13 +50,29 @@ func readPdf(path string) (string, error) {
 		}
 
 		rows, _ := p.GetTextByRow()
+
 		for _, r := range rows {
 			row := ""
 			for _, word := range r.Content {
 				row += fmt.Sprintf("%s ", word.S)
 			}
-			if monthCheck(row) {
+			_startYear, _endYear := periodCoveredCheck(row)
+			if _startYear != "" && _endYear != "" {
+				startYear = _startYear
+				endYear = _endYear
+			}
+		}
 
+		for _, r := range rows {
+
+			row := ""
+			for _, word := range r.Content {
+				row += fmt.Sprintf("%s ", word.S)
+			}
+
+			currentMonth := monthCheck(row)
+
+			if currentMonth != "" {
 				priceSplit := strings.Split(row, "$")
 
 				if len(priceSplit) == 2 {
@@ -71,23 +90,54 @@ func readPdf(path string) (string, error) {
 						transactionTitle += fmt.Sprintf("%s ", dateSplit[i])
 					}
 
-					writeToFile(fmt.Sprintf("%s,%s,%s,$%s", transactionDate, postingDate, strings.TrimSpace(transactionTitle), transactionPrice))
-				}
+					currentYear := startYear
 
+					if startYear != endYear && currentMonth == "DEC" {
+						currentYear = startYear
+					} else if startYear != endYear && currentMonth == "JAN" {
+						currentYear = endYear
+					}
+
+					writeToFile(fmt.Sprintf("%s,%s,%s,%s,$%s", currentYear, transactionDate, postingDate, strings.TrimSpace(transactionTitle), transactionPrice))
+				}
 			}
+
 		}
 	}
+
 	return "", nil
 }
 
-func monthCheck(row string) bool {
+func monthCheck(row string) (currentMonth string) {
 	months := [12]string{"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"}
+	_currentMonth := ""
+
 	for _, month := range months {
 		if strings.Contains(row, month) && !strings.Contains(row, "PAYMENT - THANK YOU -") {
-			return true
+			_currentMonth = month
 		}
 	}
-	return false
+
+	return _currentMonth
+}
+
+func periodCoveredCheck(row string) (startYear string, endYear string) {
+	if strings.Contains(row, "Period Covered:") {
+		dates := strings.Split(row, "Period Covered:")
+		datesSplit := strings.Split(dates[1], "-")
+
+		startdate := strings.TrimSpace(datesSplit[0])
+		endDate := strings.TrimSpace(datesSplit[1])
+
+		startYearSplit := strings.Split(startdate, ",")
+		endYearSplit := strings.Split(endDate, ",")
+
+		startYear := strings.TrimSpace(startYearSplit[1])
+		endYear := strings.TrimSpace(endYearSplit[1])
+
+		return startYear, endYear
+	}
+	return "", ""
 }
 
 func writeToFile(row string) {
