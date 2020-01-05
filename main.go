@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	writeToFile("Year,Transaction Date,Posting Date,Description,Amount")
+	writeToFile("Transaction Date,Posting Date,Description,Amount")
 
 	rootDir := "./statements"
 	files, err := ioutil.ReadDir(rootDir)
@@ -51,17 +51,7 @@ func readPdf(path string) (string, error) {
 
 		rows, _ := p.GetTextByRow()
 
-		for _, r := range rows {
-			row := ""
-			for _, word := range r.Content {
-				row += fmt.Sprintf("%s ", word.S)
-			}
-			_startYear, _endYear := periodCoveredCheck(row)
-			if _startYear != "" && _endYear != "" {
-				startYear = _startYear
-				endYear = _endYear
-			}
-		}
+		startYear, endYear = getYear(rows)
 
 		for _, r := range rows {
 
@@ -70,78 +60,88 @@ func readPdf(path string) (string, error) {
 				row += fmt.Sprintf("%s ", word.S)
 			}
 
-			currentMonth := monthCheck(row)
+			currentMonth := getMonth(row)
 
-			if currentMonth != "" {
+			if currentMonth != "" && startYear != "" && endYear != "" {
+
+				//Split price out of the line item
 				priceSplit := strings.Split(row, "$")
-
-				if len(priceSplit) == 2 {
-
-					transactionPrice := priceSplit[1]
-
-					dateSplit := strings.Split(priceSplit[0], " ")
-
-					transactionDate := fmt.Sprintf("%s %s", dateSplit[0], dateSplit[1])
-					postingDate := fmt.Sprintf("%s %s", dateSplit[2], dateSplit[3])
-
-					transactionTitle := ""
-
-					for i := 4; i < len(dateSplit); i++ {
-						transactionTitle += fmt.Sprintf("%s ", dateSplit[i])
-					}
-
-					currentYear := startYear
-
-					if startYear != endYear && currentMonth == "DEC" {
-						currentYear = startYear
-					} else if startYear != endYear && currentMonth == "JAN" {
-						currentYear = endYear
-					}
-
-					writeToFile(fmt.Sprintf("%s,%s,%s,%s,$%s", currentYear, transactionDate, postingDate, strings.TrimSpace(transactionTitle), transactionPrice))
+				if len(priceSplit) != 2 {
+					return "", nil
 				}
-			}
+				transactionPrice := priceSplit[1]
 
+				//Split on space so I can get the dates
+				dateSplit := strings.Split(priceSplit[0], " ")
+				transactionDate := fmt.Sprintf("%s %s", dateSplit[0], dateSplit[1])
+				postingDate := fmt.Sprintf("%s %s", dateSplit[2], dateSplit[3])
+
+				//The rest of the string inclues the line item description
+				transactionTitle := ""
+				for i := 4; i < len(dateSplit); i++ {
+					transactionTitle += fmt.Sprintf("%s ", dateSplit[i])
+				}
+
+				//Logic for setting the current year of the statment
+				//Taking the start of the stament date and the end of the statmenet to check if it is going into the next year
+				currentYear := startYear
+				if startYear != endYear && currentMonth == "DEC" {
+					currentYear = startYear
+				} else if startYear != endYear && currentMonth == "JAN" {
+					currentYear = endYear
+				}
+
+				//Writes all the transactions
+				writeToFile(fmt.Sprintf("%s %s,%s %s,%s,$%s", transactionDate, currentYear, postingDate, currentYear, strings.TrimSpace(transactionTitle), transactionPrice))
+			}
 		}
 	}
 
 	return "", nil
 }
 
-func monthCheck(row string) (currentMonth string) {
+func getMonth(row string) string {
 	months := [12]string{"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"}
-	_currentMonth := ""
 
 	for _, month := range months {
 		if strings.Contains(row, month) && !strings.Contains(row, "PAYMENT - THANK YOU -") {
-			_currentMonth = month
+			return month
 		}
 	}
 
-	return _currentMonth
+	return ""
 }
 
-func periodCoveredCheck(row string) (startYear string, endYear string) {
-	if strings.Contains(row, "Period Covered:") {
-		dates := strings.Split(row, "Period Covered:")
-		datesSplit := strings.Split(dates[1], "-")
+func getYear(rows pdf.Rows) (startYear string, endYear string) {
 
-		startdate := strings.TrimSpace(datesSplit[0])
-		endDate := strings.TrimSpace(datesSplit[1])
+	for _, r := range rows {
+		row := ""
+		for _, word := range r.Content {
+			row += fmt.Sprintf("%s ", word.S)
+		}
+		if strings.Contains(row, "Period Covered:") {
+			dates := strings.Split(row, "Period Covered:")
+			datesSplit := strings.Split(dates[1], "-")
 
-		startYearSplit := strings.Split(startdate, ",")
-		endYearSplit := strings.Split(endDate, ",")
+			startdate := strings.TrimSpace(datesSplit[0])
+			endDate := strings.TrimSpace(datesSplit[1])
 
-		startYear := strings.TrimSpace(startYearSplit[1])
-		endYear := strings.TrimSpace(endYearSplit[1])
+			startYearSplit := strings.Split(startdate, ",")
+			endYearSplit := strings.Split(endDate, ",")
 
-		return startYear, endYear
+			startYear := strings.TrimSpace(startYearSplit[1])
+			endYear := strings.TrimSpace(endYearSplit[1])
+			if startYear != "" && endYear != "" {
+				return startYear, endYear
+			}
+		}
 	}
+
 	return "", ""
 }
 
 func writeToFile(row string) {
-	f, err := os.OpenFile("statements.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile("transactions.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
