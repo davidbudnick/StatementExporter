@@ -99,7 +99,7 @@ func readPdf(path string) (string, error) {
 				}
 
 				//Writes all the transactions
-				writeToFile(fmt.Sprintf("%s %s,%s %s,%s,%s", transactionDate, currentYear, postingDate, currentYear, strings.TrimSpace(transactionTitle), transactionPrice))
+				writeToFile(fmt.Sprintf("\"%s %s\",\"%s %s\",\"%s\",\"%s\"", transactionDate, currentYear, postingDate, currentYear, strings.TrimSpace(transactionTitle), transactionPrice))
 			}
 		}
 	}
