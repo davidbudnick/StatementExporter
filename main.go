@@ -91,8 +91,15 @@ func readPdf(path string) (string, error) {
 					currentYear = endYear
 				}
 
+				if strings.Contains(transactionTitle, "CREDIT -") {
+					transactionPrice = fmt.Sprintf("-$%s", transactionPrice)
+					transactionTitle = strings.TrimRight(transactionTitle, " -")
+				} else {
+					transactionPrice = fmt.Sprintf("$%s", transactionPrice)
+				}
+
 				//Writes all the transactions
-				writeToFile(fmt.Sprintf("%s %s,%s %s,%s,$%s", transactionDate, currentYear, postingDate, currentYear, strings.TrimSpace(transactionTitle), transactionPrice))
+				writeToFile(fmt.Sprintf("%s %s,%s %s,%s,%s", transactionDate, currentYear, postingDate, currentYear, strings.TrimSpace(transactionTitle), transactionPrice))
 			}
 		}
 	}
