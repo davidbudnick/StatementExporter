@@ -19,6 +19,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	//Looop though all PDF statement in the folder
 	for _, f := range files {
 		content, err := readPdf(fmt.Sprintf("%s/%s", rootDir, f.Name()))
 		if err != nil {
@@ -30,7 +31,6 @@ func main() {
 }
 
 func readPdf(path string) (string, error) {
-
 	var startYear string
 	var endYear string
 
@@ -38,9 +38,11 @@ func readPdf(path string) (string, error) {
 	defer func() {
 		_ = f.Close()
 	}()
+
 	if err != nil {
 		return "", err
 	}
+
 	totalPage := r.NumPage()
 
 	for pageIndex := 1; pageIndex <= totalPage; pageIndex++ {
@@ -50,11 +52,9 @@ func readPdf(path string) (string, error) {
 		}
 
 		rows, _ := p.GetTextByRow()
-
 		startYear, endYear = getYear(rows)
 
 		for _, r := range rows {
-
 			row := ""
 			for _, word := range r.Content {
 				row += fmt.Sprintf("%s ", word.S)
