@@ -5,10 +5,27 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/dcu/pdf"
 )
+
+//LineItem Information
+type LineItem struct {
+	transactionMonth string
+	transactionDay   string
+	postingMonth     string
+	postingDay       string
+	description      string
+	amount           string
+}
+
+//StatementPeriods dates
+type StatementPeriods struct {
+	startYear string
+	endYear   string
+}
 
 func main() {
 	writeToFile("Transaction Date,Posting Date,Description,Amount")
@@ -19,13 +36,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	//Looop though all PDF statement in the folder
 	for _, f := range files {
-		content, err := readPdf(fmt.Sprintf("%s/%s", rootDir, f.Name()))
+		_, err := readPdf(fmt.Sprintf("%s/%s", rootDir, f.Name()))
 		if err != nil {
 			panic(err)
 		}
-		fmt.Println(content)
 	}
 
 }
@@ -52,7 +67,6 @@ func readPdf(path string) (string, error) {
 		}
 
 		rows, _ := p.GetTextByRow()
-		startYear, endYear = getYear(rows)
 
 		for _, r := range rows {
 			row := ""
@@ -60,107 +74,118 @@ func readPdf(path string) (string, error) {
 				row += fmt.Sprintf("%s ", word.S)
 			}
 
-			currentMonth := getMonth(row)
+			periods := getPeriods(row)
+			lineItem := getLineItem(row)
 
-			if currentMonth != "" && startYear != "" && endYear != "" {
-
-				//Split price out of the line item
-				priceSplit := strings.Split(row, "$")
-				if len(priceSplit) != 2 {
-					return "", nil
-				}
-				transactionPrice := priceSplit[1]
-
-				//Split on space so I can get the dates
-				dateSplit := strings.Split(priceSplit[0], " ")
-				transactionDate := fmt.Sprintf("%s %s", dateSplit[0], dateSplit[1])
-				postingDate := fmt.Sprintf("%s %s", dateSplit[2], dateSplit[3])
-
-				//The rest of the string inclues the line item description
-				transactionTitle := ""
-				for i := 4; i < len(dateSplit); i++ {
-					transactionTitle += fmt.Sprintf("%s ", dateSplit[i])
-				}
-
-				//Logic for setting the current year of the statment
-				//Taking the start of the stament date and the end of the statmenet to check if it is going into the next year
-				currentYear := startYear
-				if startYear != endYear && currentMonth == "DEC" {
-					currentYear = startYear
-				} else if startYear != endYear && currentMonth == "JAN" {
-					currentYear = endYear
-				}
-
-				if strings.Contains(transactionTitle, "CREDIT -") {
-					transactionPrice = fmt.Sprintf("-$%s", transactionPrice)
-					transactionTitle = strings.TrimRight(transactionTitle, " -")
-				} else {
-					transactionPrice = fmt.Sprintf("$%s", transactionPrice)
-				}
-
-				//Writes all the transactions
-				writeToFile(fmt.Sprintf("\"%s %s\",\"%s %s\",\"%s\",\"%s\"", transactionDate, currentYear, postingDate, currentYear, strings.TrimSpace(transactionTitle), transactionPrice))
+			if (StatementPeriods{} != periods) {
+				startYear = periods.startYear
+				endYear = periods.endYear
 			}
+
+			if (LineItem{} == lineItem) {
+				continue
+			}
+			currentTransactionYear := getCurrentYear(lineItem.transactionMonth, startYear, endYear)
+			currentPostingYear := getCurrentYear(lineItem.postingMonth, startYear, endYear)
+
+			//Removes statement payments from transactions
+			if strings.Contains(lineItem.description, "PAYMENT - THANK YOU -") {
+				continue
+			}
+
+			//Accounting for CREDIT charges on statments
+			if strings.Contains(lineItem.description, "CREDIT") {
+				lineItem.amount = fmt.Sprintf("-%s", lineItem.amount)
+				lineItem.description = strings.Replace(lineItem.description, "-", "", -1)
+			}
+
+			writeToFile(fmt.Sprintf("%s %s %s,%s %s %s,%s,%s",
+				lineItem.transactionMonth,
+				lineItem.transactionDay,
+				currentTransactionYear,
+				lineItem.postingMonth,
+				lineItem.postingDay,
+				currentPostingYear,
+				strings.TrimSpace(lineItem.description),
+				lineItem.amount,
+			))
 		}
 	}
 
 	return "", nil
 }
 
-func getMonth(row string) string {
-	months := [12]string{"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"}
+var preriodsRegex = regexp.MustCompile(`Period Covered: [a-zA-Z]* [0-9]{2}, (?P<startYear>\d{4}?) \- [a-zA-Z]* [0-9]{2}, (?P<endYear>\d{4}?)`)
 
-	for _, month := range months {
-		if strings.Contains(row, month) && !strings.Contains(row, "PAYMENT - THANK YOU -") {
-			return month
-		}
+//Gets the statement period range
+func getPeriods(row string) (periods StatementPeriods) {
+	groupItems := getGroupNames(row, *preriodsRegex)
+	periods = StatementPeriods{
+		startYear: groupItems["startYear"],
+		endYear:   groupItems["endYear"],
 	}
 
-	return ""
+	return
 }
 
-func getYear(rows pdf.Rows) (startYear string, endYear string) {
+var lineItemRegex = regexp.MustCompile(`(?P<transactionMonth>[a-zA-Z]{3}?)\s(?P<transactionDay>[0-9]{2}?)\s(?P<postingMonth>[A-Z]{3})\s(?P<postingDay>[0-9]{2}?)\s(?P<description>.*\s)(?P<amount>\$[0-9]*.[0-9]{2})`)
 
-	for _, r := range rows {
-		row := ""
-		for _, word := range r.Content {
-			row += fmt.Sprintf("%s ", word.S)
-		}
-		if strings.Contains(row, "Period Covered:") {
-			dates := strings.Split(row, "Period Covered:")
-			datesSplit := strings.Split(dates[1], "-")
+//Gets the line items by running regex on the line item
+func getLineItem(row string) (lineItem LineItem) {
+	groupItems := getGroupNames(row, *lineItemRegex)
+	lineItem = LineItem{
+		transactionMonth: groupItems["transactionMonth"],
+		transactionDay:   groupItems["transactionDay"],
+		postingMonth:     groupItems["postingMonth"],
+		postingDay:       groupItems["postingDay"],
+		description:      groupItems["description"],
+		amount:           groupItems["amount"],
+	}
 
-			startdate := strings.TrimSpace(datesSplit[0])
-			endDate := strings.TrimSpace(datesSplit[1])
+	return
+}
 
-			startYearSplit := strings.Split(startdate, ",")
-			endYearSplit := strings.Split(endDate, ",")
+//Get the current year of the line item (Transaction Date and Posting Date)
+func getCurrentYear(transactionMonth string, startYear string, endYear string) (currentYear string) {
+	currentYear = startYear
 
-			startYear := strings.TrimSpace(startYearSplit[1])
-			endYear := strings.TrimSpace(endYearSplit[1])
-			if startYear != "" && endYear != "" {
-				return startYear, endYear
+	if startYear != endYear && transactionMonth == "DEC" {
+		currentYear = startYear
+	} else if startYear != endYear && transactionMonth == "JAN" {
+		currentYear = endYear
+	}
+	return
+}
+
+//Get the group names from the regex statements
+func getGroupNames(row string, regex regexp.Regexp) (groupItems map[string]string) {
+	groupItems = make(map[string]string)
+	groupNames := regex.SubexpNames()
+
+	for _, match := range regex.FindAllStringSubmatch(row, -1) {
+		for groupIdx, group := range match {
+			name := groupNames[groupIdx]
+			if name != "" {
+				groupItems[name] = group
 			}
 		}
 	}
-
-	return "", ""
+	return
 }
 
+//Writes line items to CSV document
 func writeToFile(row string) {
 	f, err := os.OpenFile("transactions.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	if _, err := f.Write([]byte(fmt.Sprintf("%s\n", row))); err != nil {
 		log.Fatal(err)
 	}
+
 	if err := f.Close(); err != nil {
 		log.Fatal(err)
-	}
-
-	f.Close()
-	if err != nil {
-		panic(err)
 	}
 }
